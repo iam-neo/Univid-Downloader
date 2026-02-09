@@ -10,13 +10,50 @@ function detectPlatform(url: string): string {
     return "unknown"
 }
 
-// YouTube analyzer
+// Extract YouTube video ID from URL
+function extractYouTubeId(url: string): string | null {
+    const patterns = [
+        /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/)([^&\n?#]+)/,
+        /youtube\.com\/shorts\/([^&\n?#]+)/,
+    ]
+    for (const pattern of patterns) {
+        const match = url.match(pattern)
+        if (match) return match[1]
+    }
+    return null
+}
+
+// YouTube analyzer - using oEmbed API (works on Vercel) with ytdl-core fallback
 async function analyzeYouTube(url: string) {
+    const videoId = extractYouTubeId(url)
+    if (!videoId) {
+        throw new Error("Invalid YouTube URL")
+    }
+
+    // Method 1: Try oEmbed API first (reliable on serverless)
+    try {
+        const oembedUrl = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`
+        const oembedResponse = await fetch(oembedUrl)
+
+        if (oembedResponse.ok) {
+            const oembedData = await oembedResponse.json()
+            return {
+                platform: "youtube",
+                title: oembedData.title || "YouTube Video",
+                thumbnail: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+                duration: 0, // oEmbed doesn't provide duration
+                qualities: ["1080p", "720p", "480p", "360p"], // Default quality options
+            }
+        }
+    } catch (oembedError) {
+        console.log("oEmbed failed, trying ytdl-core:", oembedError)
+    }
+
+    // Method 2: Try ytdl-core as fallback (may not work on Vercel)
     try {
         const info = await ytdl.getInfo(url)
         const formats = ytdl.filterFormats(info.formats, "videoandaudio")
 
-        // Get available qualities
         const qualitySet = new Set<string>()
         formats.forEach((f) => {
             if (f.qualityLabel) {
@@ -24,7 +61,6 @@ async function analyzeYouTube(url: string) {
             }
         })
 
-        // Sort qualities
         const qualities = Array.from(qualitySet).sort((a, b) => {
             const numA = parseInt(a)
             const numB = parseInt(b)
@@ -38,9 +74,17 @@ async function analyzeYouTube(url: string) {
             duration: parseInt(info.videoDetails.lengthSeconds) || 0,
             qualities: qualities.length > 0 ? qualities : ["720p", "360p"],
         }
-    } catch (error) {
-        console.error("YouTube analysis error:", error)
-        throw new Error("Failed to analyze YouTube video. It may be private or age-restricted.")
+    } catch (ytdlError) {
+        console.error("ytdl-core also failed:", ytdlError)
+    }
+
+    // Method 3: Last resort - return basic info with video ID
+    return {
+        platform: "youtube",
+        title: "YouTube Video",
+        thumbnail: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        duration: 0,
+        qualities: ["720p", "360p"],
     }
 }
 

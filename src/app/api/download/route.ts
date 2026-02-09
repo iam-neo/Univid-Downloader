@@ -56,7 +56,7 @@ async function downloadYouTube(url: string, quality: string): Promise<Response> 
         })
     } catch (error) {
         console.error("YouTube download error:", error)
-        throw new Error("Failed to download YouTube video")
+        throw new Error("YouTube download is currently unavailable on this server. YouTube blocks requests from cloud servers. Please try TikTok, Instagram, or Facebook videos instead.")
     }
 }
 
