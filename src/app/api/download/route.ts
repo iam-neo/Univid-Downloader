@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import ytdl from "@distube/ytdl-core"
+import ytdl from "@nuclearplayer/ytdl-core"
 
 // Platform detection
 function detectPlatform(url: string): string {
