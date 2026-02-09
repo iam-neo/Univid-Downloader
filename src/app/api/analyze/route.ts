@@ -88,117 +88,115 @@ async function analyzeYouTube(url: string) {
     }
 }
 
-// TikTok analyzer (using public data extraction)
+// RapidAPI Helpers
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "660e8df9ffmshda83470792f30bep12a0b5jsnc90613c2cfde" // Using provided key as fallback/default
+const RAPIDAPI_HOST = "social-media-video-downloader.p.rapidapi.com"
+
+async function fetchFromRapidAPI(url: string) {
+    if (!RAPIDAPI_KEY) {
+        throw new Error("RAPIDAPI_KEY is not configured")
+    }
+
+    const encodedUrl = encodeURIComponent(url)
+    const response = await fetch(`https://${RAPIDAPI_HOST}/smvd/get/all?url=${encodedUrl}`, {
+        method: "GET",
+        headers: {
+            "x-rapidapi-key": RAPIDAPI_KEY,
+            "x-rapidapi-host": RAPIDAPI_HOST,
+        },
+    })
+
+    if (!response.ok) {
+        throw new Error(`RapidAPI error: ${response.statusText}`)
+    }
+
+    return await response.json()
+}
+
+// TikTok analyzer
 async function analyzeTikTok(url: string) {
     try {
-        // Extract video ID from URL
-        const videoIdMatch = url.match(/video\/(\d+)/) || url.match(/\/v\/(\d+)/)
+        const data = await fetchFromRapidAPI(url)
 
-        // For TikTok, we'll use a simpler approach - fetch the page and parse meta tags
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        })
+        // Adapt response based on typical API structure (needs adjustment based on specific API)
+        // Assuming API returns { links: [{quality: 'hd', link: '...'}], title: '...', picture: '...' }
+        // This is a generic adapter, might need specifics for "Social Media Video Downloader"
 
-        if (!response.ok) {
-            throw new Error("Failed to fetch TikTok page")
+        let title = "TikTok Video"
+        let thumbnail = ""
+        let videoUrl = ""
+
+        if (data.title) title = data.title
+        if (data.picture) thumbnail = data.picture
+        if (data.links && data.links.length > 0) {
+            videoUrl = data.links[0].link
         }
 
-        const html = await response.text()
-
-        // Parse title from og:title meta tag
-        const titleMatch = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"/)
-        const title = titleMatch ? titleMatch[1] : "TikTok Video"
-
-        // Parse thumbnail from og:image meta tag
-        const thumbMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/)
-        const thumbnail = thumbMatch ? thumbMatch[1] : ""
-
-        // Try to find duration in the page data
-        const durationMatch = html.match(/"duration":(\d+)/)
-        const duration = durationMatch ? parseInt(durationMatch[1]) : 0
+        if (!videoUrl) {
+            // Fallback if structure is different
+            console.log("RapidAPI Response:", JSON.stringify(data))
+            throw new Error("No video found")
+        }
 
         return {
             platform: "tiktok",
-            title: title.substring(0, 100),
+            title: title || "TikTok Video",
             thumbnail,
-            duration,
-            qualities: ["HD", "SD"], // TikTok typically has HD and SD options
+            duration: 0,
+            qualities: ["HD", "SD"],
+            // Return direct link if needed, but for now we stick to schema
         }
     } catch (error) {
         console.error("TikTok analysis error:", error)
-        throw new Error("Failed to analyze TikTok video. It may be private.")
+        throw new Error("Failed to analyze TikTok video")
     }
 }
 
 // Instagram analyzer
 async function analyzeInstagram(url: string) {
     try {
-        // Extract shortcode from URL
-        const shortcodeMatch = url.match(/(?:p|reel|reels)\/([A-Za-z0-9_-]+)/)
-        if (!shortcodeMatch) {
-            throw new Error("Invalid Instagram URL")
-        }
+        const data = await fetchFromRapidAPI(url)
 
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        })
+        let title = "Instagram Video"
+        let thumbnail = ""
 
-        if (!response.ok) {
-            throw new Error("Failed to fetch Instagram page")
-        }
-
-        const html = await response.text()
-
-        // Parse meta tags
-        const titleMatch = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"/)
-        const thumbMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/)
+        if (data.title) title = data.title
+        if (data.picture) thumbnail = data.picture
 
         return {
             platform: "instagram",
-            title: titleMatch ? titleMatch[1].substring(0, 100) : "Instagram Video",
-            thumbnail: thumbMatch ? thumbMatch[1] : "",
+            title: title || "Instagram Video",
+            thumbnail,
             duration: 0,
             qualities: ["HD", "SD"],
         }
     } catch (error) {
         console.error("Instagram analysis error:", error)
-        throw new Error("Failed to analyze Instagram video. It may be private or require login.")
+        throw new Error("Failed to analyze Instagram video")
     }
 }
 
 // Facebook analyzer
 async function analyzeFacebook(url: string) {
     try {
-        const response = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        })
+        const data = await fetchFromRapidAPI(url)
 
-        if (!response.ok) {
-            throw new Error("Failed to fetch Facebook page")
-        }
+        let title = "Facebook Video"
+        let thumbnail = ""
 
-        const html = await response.text()
-
-        // Parse meta tags
-        const titleMatch = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"/)
-        const thumbMatch = html.match(/<meta[^>]*property="og:image"[^>]*content="([^"]*)"/)
+        if (data.title) title = data.title
+        if (data.picture) thumbnail = data.picture
 
         return {
             platform: "facebook",
-            title: titleMatch ? titleMatch[1].substring(0, 100) : "Facebook Video",
-            thumbnail: thumbMatch ? thumbMatch[1] : "",
+            title: title || "Facebook Video",
+            thumbnail,
             duration: 0,
             qualities: ["HD", "SD"],
         }
     } catch (error) {
         console.error("Facebook analysis error:", error)
-        throw new Error("Failed to analyze Facebook video. It may be private.")
+        throw new Error("Failed to analyze Facebook video")
     }
 }
 

@@ -10,6 +10,51 @@ function detectPlatform(url: string): string {
     return "unknown"
 }
 
+// RapidAPI Helpers
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "660e8df9ffmshda83470792f30bep12a0b5jsnc90613c2cfde"
+const RAPIDAPI_HOST = "social-media-video-downloader.p.rapidapi.com"
+
+async function fetchFromRapidAPI(url: string) {
+    if (!RAPIDAPI_KEY) {
+        throw new Error("RAPIDAPI_KEY is not configured")
+    }
+
+    const encodedUrl = encodeURIComponent(url)
+    const response = await fetch(`https://${RAPIDAPI_HOST}/smvd/get/all?url=${encodedUrl}`, {
+        method: "GET",
+        headers: {
+            "x-rapidapi-key": RAPIDAPI_KEY,
+            "x-rapidapi-host": RAPIDAPI_HOST,
+        },
+    })
+
+    if (!response.ok) {
+        throw new Error(`RapidAPI error: ${response.statusText}`)
+    }
+
+    return await response.json()
+}
+
+async function streamVideo(videoUrl: string, filename: string): Promise<Response> {
+    const videoResponse = await fetch(videoUrl, {
+        headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+    })
+
+    if (!videoResponse.ok) {
+        throw new Error("Failed to download video stream")
+    }
+
+    return new Response(videoResponse.body, {
+        headers: {
+            "Content-Type": "video/mp4",
+            "Content-Disposition": `attachment; filename="${filename}"`,
+            "Content-Length": videoResponse.headers.get("content-length") || "",
+        },
+    })
+}
+
 // YouTube downloader
 async function downloadYouTube(url: string, quality: string): Promise<Response> {
     try {
@@ -60,245 +105,69 @@ async function downloadYouTube(url: string, quality: string): Promise<Response> 
     }
 }
 
-// TikTok downloader (watermark-free)
+// TikTok downloader
 async function downloadTikTok(url: string): Promise<Response> {
     try {
-        // Fetch the TikTok page to extract video data
-        const pageResponse = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            },
-        })
+        const data = await fetchFromRapidAPI(url)
+        let videoUrl = ""
 
-        if (!pageResponse.ok) {
-            throw new Error("Failed to fetch TikTok page")
-        }
-
-        const html = await pageResponse.text()
-
-        // Try to find the video URL in different formats
-        // Method 1: Look for playAddr in the page data (no watermark)
-        let videoUrl = null
-
-        // Try SIGI_STATE pattern (newer TikTok pages)
-        const sigiMatch = html.match(/<script id="SIGI_STATE"[^>]*>([^<]+)<\/script>/)
-        if (sigiMatch) {
-            try {
-                const data = JSON.parse(sigiMatch[1])
-                const itemModule = data?.ItemModule
-                if (itemModule) {
-                    const videoData = Object.values(itemModule)[0] as Record<string, unknown>
-                    const video = videoData?.video as Record<string, string>
-                    if (video?.playAddr) {
-                        videoUrl = video.playAddr
-                    } else if (video?.downloadAddr) {
-                        videoUrl = video.downloadAddr
-                    }
-                }
-            } catch {
-                // Continue to next method
-            }
-        }
-
-        // Method 2: Look for __UNIVERSAL_DATA_FOR_REHYDRATION__ pattern
-        if (!videoUrl) {
-            const universalMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([^<]+)<\/script>/)
-            if (universalMatch) {
-                try {
-                    const data = JSON.parse(universalMatch[1])
-                    const defaultScope = data?.__DEFAULT_SCOPE__
-                    const itemInfo = defaultScope?.["webapp.video-detail"]?.itemInfo?.itemStruct
-                    if (itemInfo?.video?.playAddr) {
-                        videoUrl = itemInfo.video.playAddr
-                    } else if (itemInfo?.video?.bitrateInfo?.[0]?.PlayAddr?.UrlList?.[0]) {
-                        videoUrl = itemInfo.video.bitrateInfo[0].PlayAddr.UrlList[0]
-                    }
-                } catch {
-                    // Continue to fallback
-                }
-            }
-        }
-
-        // Method 3: Regex fallback for video URL in page
-        if (!videoUrl) {
-            const urlMatch = html.match(/"playAddr":"([^"]+)"/) || html.match(/"downloadAddr":"([^"]+)"/)
-            if (urlMatch) {
-                videoUrl = urlMatch[1].replace(/\\u002F/g, "/").replace(/\\/g, "")
-            }
-        }
-
-        // Method 4: og:video meta tag (may have watermark)
-        if (!videoUrl) {
-            const ogVideoMatch = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/)
-            if (ogVideoMatch) {
-                videoUrl = ogVideoMatch[1]
-            }
+        if (data.links && data.links.length > 0) {
+            videoUrl = data.links[0].link
         }
 
         if (!videoUrl) {
-            throw new Error("Could not extract video URL. The video may be private or TikTok blocked access.")
+            throw new Error("No video link found from RapidAPI")
         }
 
-        // Decode URL if needed
-        videoUrl = decodeURIComponent(videoUrl)
-
-        // Download the video
-        const videoResponse = await fetch(videoUrl, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": "https://www.tiktok.com/",
-            },
-        })
-
-        if (!videoResponse.ok) {
-            throw new Error("Failed to download video from TikTok")
-        }
-
-        return new Response(videoResponse.body, {
-            headers: {
-                "Content-Type": "video/mp4",
-                "Content-Disposition": `attachment; filename="tiktok_video.mp4"`,
-                "Content-Length": videoResponse.headers.get("content-length") || "",
-            },
-        })
+        return await streamVideo(videoUrl, "tiktok_video.mp4")
     } catch (error) {
         console.error("TikTok download error:", error)
-        throw new Error("Failed to download TikTok video. It may be private or region-locked.")
+        throw new Error("Failed to download TikTok video via RapidAPI")
     }
 }
 
 // Instagram downloader
 async function downloadInstagram(url: string): Promise<Response> {
     try {
-        const pageResponse = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        })
+        // For Instagram, sometimes RapidAPI returns multiple links (carousel), we take the first video
+        const data = await fetchFromRapidAPI(url)
+        let videoUrl = ""
 
-        if (!pageResponse.ok) {
-            throw new Error("Failed to fetch Instagram page")
-        }
-
-        const html = await pageResponse.text()
-
-        // Try to find video URL in og:video meta tag
-        let videoUrl = null
-        const ogVideoMatch = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/)
-        if (ogVideoMatch) {
-            videoUrl = ogVideoMatch[1]
-        }
-
-        // Try content_url pattern
-        if (!videoUrl) {
-            const contentMatch = html.match(/"contentUrl":"([^"]+)"/)
-            if (contentMatch) {
-                videoUrl = contentMatch[1].replace(/\\u0026/g, "&")
-            }
-        }
-
-        // Try video_url pattern
-        if (!videoUrl) {
-            const videoMatch = html.match(/"video_url":"([^"]+)"/)
-            if (videoMatch) {
-                videoUrl = videoMatch[1].replace(/\\u0026/g, "&")
-            }
+        if (data.links && data.links.length > 0) {
+            videoUrl = data.links[0].link
         }
 
         if (!videoUrl) {
-            throw new Error("Could not extract video URL. Instagram videos often require login.")
+            throw new Error("No video link found from RapidAPI")
         }
 
-        const videoResponse = await fetch(videoUrl, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://www.instagram.com/",
-            },
-        })
-
-        if (!videoResponse.ok) {
-            throw new Error("Failed to download video from Instagram")
-        }
-
-        return new Response(videoResponse.body, {
-            headers: {
-                "Content-Type": "video/mp4",
-                "Content-Disposition": `attachment; filename="instagram_video.mp4"`,
-                "Content-Length": videoResponse.headers.get("content-length") || "",
-            },
-        })
+        return await streamVideo(videoUrl, "instagram_video.mp4")
     } catch (error) {
         console.error("Instagram download error:", error)
-        throw new Error("Failed to download Instagram video. It may require login or be private.")
+        throw new Error("Failed to download Instagram video via RapidAPI")
     }
 }
 
 // Facebook downloader
 async function downloadFacebook(url: string): Promise<Response> {
     try {
-        const pageResponse = await fetch(url, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        })
+        const data = await fetchFromRapidAPI(url)
+        let videoUrl = ""
 
-        if (!pageResponse.ok) {
-            throw new Error("Failed to fetch Facebook page")
-        }
-
-        const html = await pageResponse.text()
-
-        // Try to find video URL - Facebook encodes these
-        let videoUrl = null
-
-        // Try HD first
-        const hdMatch = html.match(/hd_src:"([^"]+)"/) || html.match(/"hd_src":"([^"]+)"/)
-        if (hdMatch) {
-            videoUrl = hdMatch[1].replace(/\\/g, "")
-        }
-
-        // Fallback to SD
-        if (!videoUrl) {
-            const sdMatch = html.match(/sd_src:"([^"]+)"/) || html.match(/"sd_src":"([^"]+)"/)
-            if (sdMatch) {
-                videoUrl = sdMatch[1].replace(/\\/g, "")
-            }
-        }
-
-        // Try og:video
-        if (!videoUrl) {
-            const ogMatch = html.match(/<meta[^>]*property="og:video"[^>]*content="([^"]*)"/)
-            if (ogMatch) {
-                videoUrl = ogMatch[1]
-            }
+        if (data.links && data.links.length > 0) {
+            // Prefer HD if available
+            const hdLink = data.links.find((l: any) => l.quality === "hd")
+            videoUrl = hdLink ? hdLink.link : data.links[0].link
         }
 
         if (!videoUrl) {
-            throw new Error("Could not extract video URL. Facebook videos may require login.")
+            throw new Error("No video link found from RapidAPI")
         }
 
-        const videoResponse = await fetch(videoUrl, {
-            headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://www.facebook.com/",
-            },
-        })
-
-        if (!videoResponse.ok) {
-            throw new Error("Failed to download video from Facebook")
-        }
-
-        return new Response(videoResponse.body, {
-            headers: {
-                "Content-Type": "video/mp4",
-                "Content-Disposition": `attachment; filename="facebook_video.mp4"`,
-                "Content-Length": videoResponse.headers.get("content-length") || "",
-            },
-        })
+        return await streamVideo(videoUrl, "facebook_video.mp4")
     } catch (error) {
         console.error("Facebook download error:", error)
-        throw new Error("Failed to download Facebook video. It may require login or be private.")
+        throw new Error("Failed to download Facebook video via RapidAPI")
     }
 }
 
